@@ -1,0 +1,41 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net9.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <AssemblyName>TwitchDownloaderAvalonia</AssemblyName>
+    <UseAppHost>true</UseAppHost>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Avalonia" Version="11.0.10" />
+    <PackageReference Include="Avalonia.Desktop" Version="11.0.10" />
+    <PackageReference Include="Avalonia.Themes.Fluent" Version="11.0.10" />
+    <PackageReference Include="Avalonia.ReactiveUI" Version="11.0.10" />
+    <PackageReference Include="CommunityToolkit.Mvvm" Version="8.2.2" />
+    <PackageReference Include="Xabe.FFmpeg.Downloader" Version="5.2.6" />
+    <PackageReference Include="Dotnet.Bundle" Version="*" />
+  </ItemGroup>
+
+  <!-- macOS .app bundle metadata used by dotnet-bundle -->
+  <PropertyGroup>
+    <CFBundleName>TwitchDownloaderAvalonia</CFBundleName>
+    <CFBundleDisplayName>TwitchDownloader</CFBundleDisplayName>
+    <CFBundleIdentifier>com.twitchdownloader.avalonia</CFBundleIdentifier>
+    <CFBundleVersion>1.0.0</CFBundleVersion>
+    <CFBundleShortVersionString>1.0.0</CFBundleShortVersionString>
+    <CFBundleExecutable>TwitchDownloaderAvalonia</CFBundleExecutable>
+    <NSHighResolutionCapable>true</NSHighResolutionCapable>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="../TwitchDownloaderCore/TwitchDownloaderCore.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <None Update="App.axaml">
+      <Generator>MSBuild:Compile</Generator>
+    </None>
+  </ItemGroup>
+</Project>
