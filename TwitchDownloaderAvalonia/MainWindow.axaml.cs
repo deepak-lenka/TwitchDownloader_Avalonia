@@ -68,6 +68,16 @@ public partial class MainWindow : Window
             var endStr = this.FindControl<TextBox>("VodEnd")?.Text ?? "0:00:30";
             var output = (this.FindControl<TextBox>("VodOutput")?.Text ?? "vod_clip.mp4").Trim();
             if (string.IsNullOrWhiteSpace(Path.GetExtension(output))) output += ".mp4";
+            // If user provided a relative name, put it into ~/Downloads
+            if (!Path.IsPathRooted(output))
+            {
+                var home = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+                var downloads = Path.Combine(home, "Downloads");
+                var baseDir = Directory.Exists(downloads) ? downloads : home;
+                output = Path.Combine(baseDir, output);
+            }
+            var outDir = Path.GetDirectoryName(output);
+            if (!string.IsNullOrWhiteSpace(outDir)) Directory.CreateDirectory(outDir);
 
             var (start, end) = NormalizeTimes(startStr, endStr);
             if (end <= start)
@@ -134,10 +144,55 @@ public partial class MainWindow : Window
                 return;
             }
             var oauth = this.FindControl<TextBox>("VodOauth")?.Text;
-            var token = await TwitchHelper.GetVideoToken(vodId, string.IsNullOrWhiteSpace(oauth) ? null : oauth);
-            var playlist = await TwitchHelper.GetVideoPlaylist(vodId, token.data.videoPlaybackAccessToken.value, token.data.videoPlaybackAccessToken.signature);
 
-            var m3u8 = M3U8.Parse(playlist);
+            // 1) Get access token
+            TwitchDownloaderCore.TwitchObjects.Gql.GqlVideoTokenResponse token;
+            try
+            {
+                token = await TwitchHelper.GetVideoToken(vodId, string.IsNullOrWhiteSpace(oauth) ? null : oauth);
+            }
+            catch (Exception ex)
+            {
+                AppendLog(logBox, "Token request failed: " + ex.Message + "\n");
+                return;
+            }
+
+            var vpat = token?.data?.videoPlaybackAccessToken;
+            if (vpat is null || string.IsNullOrWhiteSpace(vpat.value) || string.IsNullOrWhiteSpace(vpat.signature))
+            {
+                AppendLog(logBox, "Twitch did not return a playback token. This VOD may be sub‑only/private; provide OAuth and try again.\n");
+                return;
+            }
+
+            // 2) Get playlist text
+            string playlist;
+            try
+            {
+                playlist = await TwitchHelper.GetVideoPlaylist(vodId, vpat.value, vpat.signature);
+            }
+            catch (Exception ex)
+            {
+                AppendLog(logBox, "Fetching playlist failed: " + ex.Message + "\n");
+                return;
+            }
+
+            // Some responses return error strings (403 restricted). Guard parsing.
+            if (playlist.Contains("vod_manifest_restricted") || playlist.Contains("unauthorized_entitlements"))
+            {
+                AppendLog(logBox, "Access restricted: OAuth is required for this VOD.\n");
+                return;
+            }
+
+            M3U8 m3u8;
+            try
+            {
+                m3u8 = M3U8.Parse(playlist);
+            }
+            catch (Exception ex)
+            {
+                AppendLog(logBox, "Failed to parse playlist: " + ex.Message + "\n");
+                return;
+            }
             _vodQualityMap.Clear();
             var qualities = VideoQualities.FromM3U8(m3u8);
             var names = new System.Collections.Generic.List<string>();
@@ -151,8 +206,11 @@ public partial class MainWindow : Window
             if (this.FindControl<ComboBox>("VodQualityCombo") is { } combo)
             {
                 combo.ItemsSource = names;
-                var best = (qualities.BestQuality()?.Name) ?? (names.Count > 0 ? names[0] : "160p30");
-                combo.SelectedItem = best;
+                if (names.Count > 0)
+                {
+                    var best = qualities.BestQuality()?.Name ?? names[0];
+                    combo.SelectedItem = best;
+                }
             }
 
             AppendLog(logBox, $"Loaded qualities: {string.Join(", ", names)}\n");
@@ -180,6 +238,15 @@ public partial class MainWindow : Window
             var quality = (this.FindControl<TextBox>("ClipQuality")?.Text ?? "1080p60").Trim();
             var output = (this.FindControl<TextBox>("ClipOutput")?.Text ?? "clip.mp4").Trim();
             if (string.IsNullOrWhiteSpace(Path.GetExtension(output))) output += ".mp4";
+            if (!Path.IsPathRooted(output))
+            {
+                var home = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+                var downloads = Path.Combine(home, "Downloads");
+                var baseDir = Directory.Exists(downloads) ? downloads : home;
+                output = Path.Combine(baseDir, output);
+            }
+            var outDir = Path.GetDirectoryName(output);
+            if (!string.IsNullOrWhiteSpace(outDir)) Directory.CreateDirectory(outDir);
 
             var ffmpegPath = await _ffmpeg.GetPreferredFfmpegPathAsync();
 

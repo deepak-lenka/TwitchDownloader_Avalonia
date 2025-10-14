@@ -22,24 +22,36 @@ public sealed class FfmpegService
         var onPath = ResolveOnPath(ExecutableName);
         if (onPath is not null) return onPath;
 
-        // 3) Download locally
+        // 3) Download to user-writable folder
         return await DownloadLatestAsync();
     }
 
     public async Task<string> DownloadLatestAsync()
     {
-        var appDir = AppContext.BaseDirectory;
-        var cwd = Environment.CurrentDirectory;
-        var appTarget = Path.Combine(appDir, ExecutableName);
-        var cwdTarget = Path.Combine(cwd, ExecutableName);
-        if (File.Exists(appTarget)) return appTarget;
-        if (File.Exists(cwdTarget)) return cwdTarget;
+        // Use a per-user writable directory (no writes inside .app or root)
+        var homeDir = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
+        if (string.IsNullOrWhiteSpace(homeDir))
+            homeDir = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+        var toolsDir = Path.Combine(homeDir, "TwitchDownloader", "ffmpeg");
+        Directory.CreateDirectory(toolsDir);
+        var target = Path.Combine(toolsDir, ExecutableName);
+        if (File.Exists(target))
+        {
+            TryChmodX(target);
+            return target;
+        }
 
+        // Tell Xabe where to place ffmpeg and download
+        FFmpeg.SetExecutablesPath(toolsDir);
         await FFmpegDownloader.GetLatestVersion(FFmpegVersion.Official);
 
-        // Xabe usually places ffmpeg in the current working directory
-        var found = File.Exists(cwdTarget) ? cwdTarget : (File.Exists(appTarget) ? appTarget : null);
-        var target = found ?? cwdTarget;
+        // Xabe places ffmpeg into toolsDir
+        if (!File.Exists(target))
+        {
+            // some versions add platform subfolders; try to locate the binary
+            var guess = ResolveOnPathFromDir(toolsDir, ExecutableName);
+            if (guess is not null) target = guess;
+        }
 
         // ensure executable bit
         if (!RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
@@ -52,12 +64,29 @@ public sealed class FfmpegService
 
     private static string? ResolveOnPath(string exe)
     {
-        var paths = (Environment.GetEnvironmentVariable("PATH") ?? string.Empty).Split(':', StringSplitOptions.RemoveEmptyEntries);
+        var pathsVar = Environment.GetEnvironmentVariable("PATH") ?? string.Empty;
+        // Add common locations that Finder-launched apps often miss
+        var extra = new[] { "/opt/homebrew/bin", "/usr/local/bin", "/usr/bin", "/bin" };
+        var paths = new System.Collections.Generic.HashSet<string>(pathsVar.Split(':', StringSplitOptions.RemoveEmptyEntries));
+        foreach (var p in extra) paths.Add(p);
         foreach (var p in paths)
         {
             var candidate = Path.Combine(p, exe);
             if (File.Exists(candidate)) return candidate;
         }
+        return null;
+    }
+
+    private static string? ResolveOnPathFromDir(string dir, string exe)
+    {
+        try
+        {
+            foreach (var path in Directory.EnumerateFiles(dir, exe, SearchOption.AllDirectories))
+            {
+                if (File.Exists(path)) return path;
+            }
+        }
+        catch { }
         return null;
     }
 
