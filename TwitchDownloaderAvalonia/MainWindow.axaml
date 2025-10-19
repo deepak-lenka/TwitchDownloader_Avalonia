@@ -87,6 +87,145 @@
         </ScrollViewer>
       </TabItem>
 
+      <TabItem Header="Chat Download">
+        <ScrollViewer>
+          <StackPanel Margin="12" Spacing="8">
+            <TextBlock Text="VOD/Clip URL or ID"/>
+            <TextBox x:Name="ChatId"/>
+
+            <StackPanel Orientation="Horizontal" Spacing="8">
+              <StackPanel Width="160">
+                <TextBlock Text="Format"/>
+                <ComboBox x:Name="ChatFormatCombo" SelectedIndex="0">
+                  <ComboBoxItem Content="JSON"/>
+                  <ComboBoxItem Content="HTML"/>
+                  <ComboBoxItem Content="Text"/>
+                </ComboBox>
+              </StackPanel>
+              <StackPanel Width="160">
+                <TextBlock Text="Compression"/>
+                <ComboBox x:Name="ChatCompressionCombo" SelectedIndex="0">
+                  <ComboBoxItem Content="None"/>
+                  <ComboBoxItem Content="Gzip"/>
+                </ComboBox>
+              </StackPanel>
+              <StackPanel Width="220">
+                <TextBlock Text="Timestamp (Text only)"/>
+                <ComboBox x:Name="ChatTimeFormat" SelectedIndex="0">
+                  <ComboBoxItem Content="Relative"/>
+                  <ComboBoxItem Content="Utc"/>
+                  <ComboBoxItem Content="UtcFull"/>
+                  <ComboBoxItem Content="None"/>
+                </ComboBox>
+              </StackPanel>
+              <StackPanel Width="120">
+                <TextBlock Text="Threads"/>
+                <TextBox x:Name="ChatThreads" Text="4"/>
+              </StackPanel>
+            </StackPanel>
+
+            <StackPanel Orientation="Horizontal" Spacing="12">
+              <CheckBox x:Name="ChatEmbed" Content="Embed images (emotes/badges/bits)"/>
+              <CheckBox x:Name="ChatBttv" Content="BTTV" IsChecked="True"/>
+              <CheckBox x:Name="ChatFfz" Content="FFZ" IsChecked="True"/>
+              <CheckBox x:Name="ChatStv" Content="7TV" IsChecked="True"/>
+            </StackPanel>
+
+            <StackPanel Orientation="Horizontal" Spacing="8">
+              <StackPanel Width="160">
+                <TextBlock Text="Start (H:MM:SS)"/>
+                <TextBox x:Name="ChatStart" Text="0:00:00"/>
+              </StackPanel>
+              <StackPanel Width="160">
+                <TextBlock Text="End (H:MM:SS)"/>
+                <TextBox x:Name="ChatEnd" Text="0:00:30"/>
+              </StackPanel>
+              <StackPanel Width="420">
+                <TextBlock Text="Output"/>
+                <TextBox x:Name="ChatOutput" Text="chat.json"/>
+              </StackPanel>
+            </StackPanel>
+
+            <StackPanel Orientation="Horizontal" Spacing="8">
+              <Button x:Name="ChatDownloadBtn" Content="Download Chat"/>
+            </StackPanel>
+
+            <TextBlock Text="Log"/>
+            <TextBox x:Name="ChatLog" IsReadOnly="True" AcceptsReturn="True" Height="220"/>
+          </StackPanel>
+        </ScrollViewer>
+      </TabItem>
+
+      <TabItem Header="Chat Render">
+        <ScrollViewer>
+          <StackPanel Margin="12" Spacing="8">
+            <StackPanel Orientation="Horizontal" Spacing="8">
+              <StackPanel Width="500">
+                <TextBlock Text="Input JSON (.json or .json.gz)"/>
+                <TextBox x:Name="ChatRenderInput"/>
+              </StackPanel>
+              <StackPanel Width="420">
+                <TextBlock Text="Output video (.mp4)"/>
+                <TextBox x:Name="ChatRenderOutput" Text="chat.mp4"/>
+              </StackPanel>
+            </StackPanel>
+
+            <StackPanel Orientation="Horizontal" Spacing="8">
+              <StackPanel Width="140">
+                <TextBlock Text="Width"/>
+                <TextBox x:Name="ChatWidth" Text="350"/>
+              </StackPanel>
+              <StackPanel Width="140">
+                <TextBlock Text="Height"/>
+                <TextBox x:Name="ChatHeight" Text="600"/>
+              </StackPanel>
+              <StackPanel Width="180">
+                <TextBlock Text="Font"/>
+                <TextBox x:Name="ChatFont" Text="Inter Embedded"/>
+              </StackPanel>
+              <StackPanel Width="140">
+                <TextBlock Text="Font Size"/>
+                <TextBox x:Name="ChatFontSize" Text="12"/>
+              </StackPanel>
+              <StackPanel Width="140">
+                <TextBlock Text="Framerate"/>
+                <TextBox x:Name="ChatFramerate" Text="30"/>
+              </StackPanel>
+            </StackPanel>
+
+            <StackPanel Orientation="Horizontal" Spacing="12">
+              <CheckBox x:Name="ChatOutline" Content="Outline"/>
+              <CheckBox x:Name="ChatAltBackgrounds" Content="Alternate backgrounds"/>
+              <CheckBox x:Name="ChatTimestamps" Content="Timestamps"/>
+              <CheckBox x:Name="ChatBadges" Content="Badges" IsChecked="True"/>
+              <CheckBox x:Name="ChatAvatars" Content="Avatars"/>
+            </StackPanel>
+
+            <StackPanel Orientation="Horizontal" Spacing="8">
+              <StackPanel Width="180">
+                <TextBlock Text="Background Color"/>
+                <TextBox x:Name="ChatBgColor" Text="#111111"/>
+              </StackPanel>
+              <StackPanel Width="180">
+                <TextBlock Text="Alt Background Color"/>
+                <TextBox x:Name="ChatAltBgColor" Text="#191919"/>
+              </StackPanel>
+              <StackPanel Width="180">
+                <TextBlock Text="Message Color"/>
+                <TextBox x:Name="ChatMsgColor" Text="#ffffff"/>
+              </StackPanel>
+            </StackPanel>
+
+            <StackPanel Orientation="Horizontal" Spacing="8">
+              <Button x:Name="ChatRenderBtn" Content="Render Chat"/>
+            </StackPanel>
+
+            <TextBlock Text="Log"/>
+            <TextBox x:Name="ChatRenderLog" IsReadOnly="True" AcceptsReturn="True" Height="220"/>
+          </StackPanel>
+        </ScrollViewer>
+      </TabItem>
+
       <TabItem Header="Settings">
         <StackPanel Margin="12" Spacing="8">
           <TextBlock Text="FFmpeg"/>

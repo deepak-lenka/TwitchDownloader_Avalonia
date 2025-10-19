@@ -27,7 +27,7 @@ public sealed class UiTaskProgress : ITaskProgress
 
     public void SetTemplateStatus(string status, int initialPercent, TimeSpan initialTime1, TimeSpan initialTime2)
     {
-        _onStatus?.Invoke(string.Format(status, initialPercent));
+        _onStatus?.Invoke(string.Format(status, initialPercent, initialTime1, initialTime2));
         _onPercent?.Invoke(initialPercent);
     }
 

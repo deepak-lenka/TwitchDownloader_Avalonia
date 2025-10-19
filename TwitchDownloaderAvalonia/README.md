@@ -28,6 +28,117 @@ Cross‑platform GUI powered by Avalonia, reusing `TwitchDownloaderCore/`. This 
 
 ---
 
+## End‑user install from GitHub Releases (Terminal)
+
+If a friend wants to install directly from your repo using Terminal, share these commands. Replace the version tag if needed (v0.1.0 shown as example).
+
+Check Mac type:
+```bash
+uname -m
+# arm64 = Apple Silicon, x86_64 = Intel
+```
+
+Apple Silicon (arm64):
+```bash
+cd ~/Downloads
+curl -L -o TwitchDownloader-macOS-arm64.zip "https://github.com/deepak-lenka/TwitchDownloader_Avalonia/releases/download/v0.1.0/TwitchDownloader-macOS-arm64.zip"
+unzip -q -o TwitchDownloader-macOS-arm64.zip
+xattr -dr com.apple.quarantine "TwitchDownloader.app"
+open "TwitchDownloader.app"
+```
+
+Intel (x64):
+```bash
+cd ~/Downloads
+curl -L -o TwitchDownloader-macOS-x64.zip "https://github.com/deepak-lenka/TwitchDownloader_Avalonia/releases/download/v0.1.0/TwitchDownloader-macOS-x64.zip"
+unzip -q -o TwitchDownloader-macOS-x64.zip
+xattr -dr com.apple.quarantine "TwitchDownloader.app"
+open "TwitchDownloader.app"
+```
+
+Optional move to Applications:
+```bash
+mv -f ~/Downloads/"TwitchDownloader.app" /Applications/
+open /Applications/TwitchDownloader.app
+```
+
+Notes:
+- Run one command per line (don’t glue commands together).
+- If the release/tag changes, update the URL to the new tag.
+- If Finder is used instead of Terminal: double‑click the zip, then right‑click the app → Open → Open on first run.
+
+---
+
+## Terminal Quickstart (macOS, no signing)
+
+Follow these exact steps to build, zip, unzip, and run. Run one command per line.
+
+### 1) Prerequisites
+
+- Install .NET SDK (8 or 9):
+  ```bash
+  brew install --cask dotnet-sdk
+  dotnet --version
+  ```
+
+### 2) Build the app bundle (arm64)
+
+From the repo root `TwitchDownloader/`:
+
+```bash
+cd /Users/<you>/twitch-CLI/TwitchDownloader
+dotnet restore TwitchDownloaderAvalonia/TwitchDownloaderAvalonia.csproj -r osx-arm64
+dotnet msbuild TwitchDownloaderAvalonia/TwitchDownloaderAvalonia.csproj \
+  -t:BundleApp -p:RuntimeIdentifier=osx-arm64 -p:Configuration=Release -p:UseAppHost=true
+```
+
+The app will be at:
+`TwitchDownloaderAvalonia/bin/Release/net9.0/osx-arm64/publish/TwitchDownloader.app`
+
+### 3) Create a zip (recommended: ditto)
+
+```bash
+cd TwitchDownloaderAvalonia/bin/Release/net9.0/osx-arm64/publish
+ditto -c -k --keepParent TwitchDownloader.app TwitchDownloader-macOS-arm64.zip
+ls -lh TwitchDownloader-macOS-arm64.zip
+```
+
+### 4) Test unzip and launch (like your testers will)
+
+```bash
+cd ~/Downloads
+cp /Users/<you>/twitch-CLI/TwitchDownloader/TwitchDownloaderAvalonia/bin/Release/net9.0/osx-arm64/publish/TwitchDownloader-macOS-arm64.zip .
+unzip -q -o TwitchDownloader-macOS-arm64.zip
+xattr -dr com.apple.quarantine TwitchDownloader.app
+open TwitchDownloader.app
+```
+
+If you prefer Finder: Double‑click the zip to unzip, then double‑click the app. If blocked, right‑click → Open → Open.
+
+### 5) Share the zip
+
+Upload `TwitchDownloader-macOS-arm64.zip` to Google Drive/GitHub Releases and share the link. Testers can follow step 4 to unzip and run.
+
+### Intel Macs (x64)
+
+```bash
+cd /Users/<you>/twitch-CLI/TwitchDownloader
+dotnet msbuild TwitchDownloaderAvalonia/TwitchDownloaderAvalonia.csproj \
+  -t:BundleApp -p:RuntimeIdentifier=osx-x64 -p:Configuration=Release -p:UseAppHost=true
+cd TwitchDownloaderAvalonia/bin/Release/net9.0/osx-x64/publish
+ditto -c -k --keepParent TwitchDownloader.app TwitchDownloader-macOS-x64.zip
+```
+
+### Avoid common mistakes
+
+- Do not paste multiple commands on one line unless you use `&&` between them.
+  - Good: `cmd1 && cmd2`
+  - Bad: `cmd1cmd2`
+- If Finder says “is damaged and can’t be opened”, it’s Gatekeeper quarantine. Use `xattr -dr com.apple.quarantine TwitchDownloader.app` once after unzip.
+- The app saves output by default to `~/Downloads/` (no permissions needed).
+
+---
+
 ## Quick Usage
 
 - **VOD Download**
