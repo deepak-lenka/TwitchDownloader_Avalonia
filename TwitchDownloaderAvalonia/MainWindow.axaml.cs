@@ -1,17 +1,22 @@
 using System;
 using System.IO;
+using System.Linq;
 using System.Text.RegularExpressions;
+using System.Net.Http;
 using System.Threading;
 using System.Threading.Tasks;
 using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Interactivity;
+using Avalonia.Media.Imaging;
+using Avalonia.Platform.Storage;
 using Avalonia.Threading;
 using SkiaSharp;
 using TwitchDownloaderCore;
 using TwitchDownloaderCore.Interfaces;
 using TwitchDownloaderCore.Models;
 using TwitchDownloaderCore.Options;
+using TwitchDownloaderCore.Tools;
 
 namespace TwitchDownloaderAvalonia;
 
@@ -19,11 +24,301 @@ public partial class MainWindow : Window
 {
     private readonly Services.FfmpegService _ffmpeg = new();
     private readonly System.Collections.Generic.Dictionary<string, M3U8.Stream> _vodQualityMap = new();
+    private CancellationTokenSource? _vodCancellationTokenSource;
+    private CancellationTokenSource? _clipCancellationTokenSource;
+    private CancellationTokenSource? _chatCancellationTokenSource;
+    private CancellationTokenSource? _chatRenderCancellationTokenSource;
 
     public MainWindow()
     {
         InitializeComponent();
-        this.Opened += (_, __) => WireEvents();
+        this.Opened += (_, __) => 
+        {
+            WireEvents();
+            LoadSavedSettings();
+        };
+    }
+    
+    private void LoadSavedSettings()
+    {
+        // Load chat render settings
+        if (this.FindControl<TextBox>("ChatWidth") is { } chatWidth)
+            chatWidth.Text = Services.SettingsService.Settings.ChatWidth.ToString();
+            
+        if (this.FindControl<TextBox>("ChatHeight") is { } chatHeight)
+            chatHeight.Text = Services.SettingsService.Settings.ChatHeight.ToString();
+            
+        if (this.FindControl<TextBox>("ChatFontSize") is { } chatFontSize)
+            chatFontSize.Text = Services.SettingsService.Settings.ChatFontSize.ToString();
+            
+        if (this.FindControl<TextBox>("ChatFramerate") is { } chatFramerate)
+            chatFramerate.Text = Services.SettingsService.Settings.ChatFramerate.ToString();
+            
+        if (this.FindControl<TextBox>("ChatFont") is { } chatFont)
+            chatFont.Text = Services.SettingsService.Settings.ChatFont;
+            
+        if (this.FindControl<TextBox>("ChatBgColor") is { } chatBgColor)
+            chatBgColor.Text = Services.SettingsService.Settings.ChatBgColor;
+            
+        if (this.FindControl<TextBox>("ChatAltBgColor") is { } chatAltBgColor)
+            chatAltBgColor.Text = Services.SettingsService.Settings.ChatAltBgColor;
+            
+        if (this.FindControl<TextBox>("ChatMsgColor") is { } chatMsgColor)
+            chatMsgColor.Text = Services.SettingsService.Settings.ChatMsgColor;
+            
+        if (this.FindControl<CheckBox>("ChatOutline") is { } chatOutline)
+            chatOutline.IsChecked = Services.SettingsService.Settings.ChatOutline;
+            
+        if (this.FindControl<CheckBox>("ChatAltBackgrounds") is { } chatAltBackgrounds)
+            chatAltBackgrounds.IsChecked = Services.SettingsService.Settings.ChatAltBackgrounds;
+            
+        if (this.FindControl<CheckBox>("ChatTimestamps") is { } chatTimestamps)
+            chatTimestamps.IsChecked = Services.SettingsService.Settings.ChatTimestamps;
+            
+        if (this.FindControl<CheckBox>("ChatBadges") is { } chatBadges)
+            chatBadges.IsChecked = Services.SettingsService.Settings.ChatBadges;
+            
+        if (this.FindControl<CheckBox>("ChatAvatars") is { } chatAvatars)
+            chatAvatars.IsChecked = Services.SettingsService.Settings.ChatAvatars;
+            
+        if (this.FindControl<CheckBox>("ChatBttv") is { } chatBttv)
+            chatBttv.IsChecked = Services.SettingsService.Settings.ChatBttv;
+            
+        if (this.FindControl<CheckBox>("ChatFfz") is { } chatFfz)
+            chatFfz.IsChecked = Services.SettingsService.Settings.ChatFfz;
+            
+        if (this.FindControl<CheckBox>("ChatStv") is { } chatStv)
+            chatStv.IsChecked = Services.SettingsService.Settings.ChatStv;
+            
+        // Load download settings
+        if (this.FindControl<TextBox>("VodThreads") is { } vodThreads)
+            vodThreads.Text = Services.SettingsService.Settings.VodDownloadThreads.ToString();
+    }
+
+    private static readonly HttpClient _http = new();
+
+    private static string SanitizeFileName(string name)
+    {
+        var invalid = Path.GetInvalidFileNameChars();
+        var cleaned = new string(name.Select(ch => invalid.Contains(ch) || ch == ':' ? '-' : ch).ToArray());
+        // Collapse spaces
+        cleaned = Regex.Replace(cleaned, @"\s+", " ").Trim();
+        return cleaned;
+    }
+
+    private static async Task SetImageFromUrlAsync(Image? image, string? url)
+    {
+        if (image == null || string.IsNullOrWhiteSpace(url)) return;
+        try
+        {
+            var bytes = await _http.GetByteArrayAsync(url);
+            await using var ms = new MemoryStream(bytes);
+            var bmp = new Bitmap(ms);
+            await Dispatcher.UIThread.InvokeAsync(() => image.Source = bmp);
+        }
+        catch { /* ignore thumbnail errors */ }
+    }
+
+    private async void ClipLoadInfoBtnOnClickAsync(object? sender, RoutedEventArgs e)
+    {
+        var logBox = this.FindControl<TextBox>("ClipLog");
+        try
+        {
+            var idText = this.FindControl<TextBox>("ClipId")?.Text ?? string.Empty;
+            var clipId = ParseClipId(idText);
+            if (string.IsNullOrWhiteSpace(clipId))
+            {
+                AppendLog(logBox, "Invalid clip id or URL\n");
+                return;
+            }
+
+            AppendLog(logBox, "Loading clip info...\n");
+            var clipStatus = await TwitchHelper.GetShareClipRenderStatus(clipId);
+            var clip = clipStatus?.data?.clip;
+            if (clip is null || clip.assets is null)
+            {
+                AppendLog(logBox, "Unable to load clip info.\n");
+                return;
+            }
+
+            var qualities = VideoQualities.FromClip(clip);
+            var names = qualities.Qualities.Select(q => q.Name).ToList();
+            if (this.FindControl<ComboBox>("ClipQualityCombo") is { } combo)
+            {
+                combo.ItemsSource = names;
+                if (names.Count > 0)
+                    combo.SelectedIndex = 0;
+            }
+            // Thumbnail
+            await SetImageFromUrlAsync(this.FindControl<Image>("ClipThumb"), clip.thumbnailURL);
+
+            // Metadata text
+            if (this.FindControl<TextBlock>("ClipTitle") is { } clipTitle)
+                clipTitle.Text = clip.title ?? string.Empty;
+            if (this.FindControl<TextBlock>("ClipMeta") is { } clipMeta)
+            {
+                var when = clip.createdAt.ToLocalTime().ToString("g");
+                var ch = clip.broadcaster?.displayName ?? "";
+                var dur = TimeSpan.FromSeconds(clip.durationSeconds);
+                clipMeta.Text = $"{ch} · {when} · {dur:c}";
+            }
+
+            // Suggested filename: [yyyy-MM-dd] Channel - Clip.mp4
+            var date = clip.createdAt.ToLocalTime().ToString("dd-MM-yyyy");
+            var channel = clip.broadcaster?.displayName ?? "Twitch";
+            var suggested = SanitizeFileName($"[{date}] {channel} - Clip.mp4");
+            if (this.FindControl<TextBox>("ClipOutput") is { } outBox)
+            {
+                if (string.IsNullOrWhiteSpace(outBox.Text) || outBox.Text.Equals("clip.mp4", StringComparison.OrdinalIgnoreCase))
+                    outBox.Text = suggested;
+            }
+            AppendLog(logBox, $"Loaded qualities: {string.Join(", ", names)}\n");
+        }
+        catch (Exception ex)
+        {
+            AppendLog(logBox, "Load Info failed: " + ex.Message + "\n");
+            AppendLog(logBox, GetFriendlyHint(ex) + "\n");
+        }
+    }
+
+    private async void ChatLoadInfoBtnOnClickAsync(object? sender, RoutedEventArgs e)
+    {
+        var logBox = this.FindControl<TextBox>("ChatLog");
+        try
+        {
+            var idText = this.FindControl<TextBox>("ChatId")?.Text?.Trim() ?? string.Empty;
+            if (string.IsNullOrWhiteSpace(idText))
+            {
+                AppendLog(logBox, "Provide a VOD/Clip URL or ID.\n");
+                return;
+            }
+
+            string normalizedId;
+            bool isVod = false;
+            if (TryParseVodId(idText, out var vodId))
+            {
+                normalizedId = vodId.ToString();
+                isVod = true;
+            }
+            else if (LooksLikeClipUrl(idText))
+            {
+                var slug = ParseClipId(idText);
+                if (string.IsNullOrWhiteSpace(slug))
+                {
+                    AppendLog(logBox, "Invalid clip URL or slug.\n");
+                    return;
+                }
+                normalizedId = slug;
+            }
+            else
+            {
+                AppendLog(logBox, "Invalid VOD/Clip id or URL\n");
+                return;
+            }
+
+            if (isVod)
+            {
+                var info = await TwitchHelper.GetVideoInfo(long.Parse(normalizedId));
+                var lenSec = info?.data?.video?.lengthSeconds ?? 0;
+                AppendLog(logBox, $"Title: {info?.data?.video?.title}\n");
+                AppendLog(logBox, $"Streamer: {info?.data?.video?.owner?.displayName}\n");
+                AppendLog(logBox, $"Length: {TimeSpan.FromSeconds(lenSec):c}\n");
+
+                if (this.FindControl<TextBox>("ChatStart") is { } start && this.FindControl<TextBox>("ChatEnd") is { } end)
+                {
+                    if (string.IsNullOrWhiteSpace(start.Text)) start.Text = "0:00:00";
+                    end.Text = TimeSpan.FromSeconds(lenSec).ToString("c");
+                }
+
+                // Thumbnail
+                var thumb = info?.data?.video?.thumbnailURLs?.FirstOrDefault();
+                await SetImageFromUrlAsync(this.FindControl<Image>("ChatThumb"), thumb);
+                await SetImageFromUrlAsync(this.FindControl<Image>("VodThumb"), thumb);
+
+                // Metadata text
+                if (this.FindControl<TextBlock>("VodTitle") is { } vodTitle)
+                    vodTitle.Text = info?.data?.video?.title ?? string.Empty;
+                if (this.FindControl<TextBlock>("VodMeta") is { } vodMeta)
+                {
+                    var when = info?.data?.video?.createdAt.ToLocalTime().ToString("g");
+                    var ch = info?.data?.video?.owner?.displayName ?? "";
+                    var len = TimeSpan.FromSeconds(lenSec);
+                    vodMeta.Text = $"{ch} · {when} · {len:c}";
+                }
+                if (this.FindControl<TextBlock>("ChatTitle") is { } chatTitle)
+                    chatTitle.Text = info?.data?.video?.title ?? string.Empty;
+                if (this.FindControl<TextBlock>("ChatMeta") is { } chatMeta)
+                {
+                    var when = info?.data?.video?.createdAt.ToLocalTime().ToString("g");
+                    var ch = info?.data?.video?.owner?.displayName ?? "";
+                    var len = TimeSpan.FromSeconds(lenSec);
+                    chatMeta.Text = $"{ch} · {when} · {len:c}";
+                }
+
+                // Suggested filenames
+                var date = info?.data?.video?.createdAt.ToLocalTime().ToString("dd-MM-yyyy");
+                var channel = info?.data?.video?.owner?.displayName ?? "Twitch";
+                var vodName = SanitizeFileName($"[{date}] {channel} - VOD.mp4");
+                if (this.FindControl<TextBox>("VodOutput") is { } vodOut)
+                {
+                    if (string.IsNullOrWhiteSpace(vodOut.Text) || vodOut.Text.Equals("vod_clip.mp4", StringComparison.OrdinalIgnoreCase))
+                        vodOut.Text = vodName;
+                }
+                var (fmt, comp, _) = GetChatSelectionsFromUi();
+                var chatBase = SanitizeFileName($"[{date}] {channel} - Chat");
+                if (this.FindControl<TextBox>("ChatOutput") is { } chatOut)
+                {
+                    var suggested = EnsureChatOutputExtension(chatBase, fmt, comp);
+                    if (string.IsNullOrWhiteSpace(chatOut.Text) || chatOut.Text.Equals("chat.json", StringComparison.OrdinalIgnoreCase))
+                        chatOut.Text = suggested;
+                }
+            }
+            else
+            {
+                var clipInfo = await TwitchHelper.GetClipInfo(normalizedId);
+                var durSec = clipInfo?.data?.clip?.durationSeconds ?? 0;
+                AppendLog(logBox, $"Clip: {clipInfo?.data?.clip?.title}\n");
+                AppendLog(logBox, $"Broadcaster: {clipInfo?.data?.clip?.broadcaster?.displayName}\n");
+                AppendLog(logBox, $"Duration: {TimeSpan.FromSeconds(durSec):c}\n");
+
+                if (this.FindControl<TextBox>("ChatStart") is { } start && this.FindControl<TextBox>("ChatEnd") is { } end)
+                {
+                    start.Text = "0:00:00";
+                    end.Text = TimeSpan.FromSeconds(durSec).ToString("c");
+                }
+
+                // Thumbnail
+                await SetImageFromUrlAsync(this.FindControl<Image>("ChatThumb"), clipInfo?.data?.clip?.thumbnailURL);
+
+                // Metadata text
+                if (this.FindControl<TextBlock>("ChatTitle") is { } chatTitle2)
+                    chatTitle2.Text = clipInfo?.data?.clip?.title ?? string.Empty;
+                if (this.FindControl<TextBlock>("ChatMeta") is { } chatMeta2)
+                {
+                    var when = clipInfo?.data?.clip?.createdAt.ToLocalTime().ToString("g");
+                    var ch = clipInfo?.data?.clip?.broadcaster?.displayName ?? "";
+                    var len = TimeSpan.FromSeconds(durSec);
+                    chatMeta2.Text = $"{ch} · {when} · {len:c}";
+                }
+
+                // Suggested Chat filename
+                var date = clipInfo?.data?.clip?.createdAt.ToLocalTime().ToString("dd-MM-yyyy");
+                var channel = clipInfo?.data?.clip?.broadcaster?.displayName ?? "Twitch";
+                var (fmt, comp, _) = GetChatSelectionsFromUi();
+                var chatBase = SanitizeFileName($"[{date}] {channel} - Chat");
+                if (this.FindControl<TextBox>("ChatOutput") is { } chatOut)
+                {
+                    var suggested = EnsureChatOutputExtension(chatBase, fmt, comp);
+                    if (string.IsNullOrWhiteSpace(chatOut.Text) || chatOut.Text.Equals("chat.json", StringComparison.OrdinalIgnoreCase))
+                        chatOut.Text = suggested;
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            AppendLog(logBox, "Load Info failed: " + ex.Message + "\n");
+            AppendLog(logBox, GetFriendlyHint(ex) + "\n");
+        }
     }
 
     private void WireEvents()
@@ -32,15 +327,27 @@ public partial class MainWindow : Window
             vodBtn.Click += VodDownloadBtnOnClickAsync;
         if (this.FindControl<Button>("VodLoadInfoBtn") is { } vodLoad)
             vodLoad.Click += VodLoadInfoBtnOnClickAsync;
+        if (this.FindControl<Button>("VodCancelBtn") is { } vodCancel)
+            vodCancel.Click += VodCancelBtnOnClickAsync;
         if (this.FindControl<Button>("ClipDownloadBtn") is { } clipBtn)
             clipBtn.Click += ClipDownloadBtnOnClickAsync;
+        if (this.FindControl<Button>("ClipLoadInfoBtn") is { } clipLoad)
+            clipLoad.Click += ClipLoadInfoBtnOnClickAsync;
+        if (this.FindControl<Button>("ClipCancelBtn") is { } clipCancel)
+            clipCancel.Click += ClipCancelBtnOnClickAsync;
         if (this.FindControl<Button>("BtnDownloadFFmpeg") is { } ffmpegBtn)
             ffmpegBtn.Click += BtnDownloadFfmpegOnClickAsync;
 
         if (this.FindControl<Button>("ChatDownloadBtn") is { } chatDlBtn)
             chatDlBtn.Click += ChatDownloadBtnOnClickAsync;
+        if (this.FindControl<Button>("ChatCancelBtn") is { } chatCancel)
+            chatCancel.Click += ChatCancelBtnOnClickAsync;
         if (this.FindControl<Button>("ChatRenderBtn") is { } chatRenderBtn)
             chatRenderBtn.Click += ChatRenderBtnOnClickAsync;
+        if (this.FindControl<Button>("ChatRenderCancelBtn") is { } chatRenderCancel)
+            chatRenderCancel.Click += ChatRenderCancelBtnOnClickAsync;
+        if (this.FindControl<Button>("ChatLoadInfoBtn") is { } chatLoad)
+            chatLoad.Click += ChatLoadInfoBtnOnClickAsync;
 
         if (this.FindControl<ComboBox>("VodQualityCombo") is { } qCombo)
             qCombo.SelectionChanged += (_, __) => UpdateVodEstimate();
@@ -48,6 +355,122 @@ public partial class MainWindow : Window
             t1.GetObservable(TextBox.TextProperty).Subscribe(_ => UpdateVodEstimate());
         if (this.FindControl<TextBox>("VodEnd") is { } t2)
             t2.GetObservable(TextBox.TextProperty).Subscribe(_ => UpdateVodEstimate());
+    }
+
+    private void UpdateVodActionButtons(bool isDownloading)
+    {
+        if (this.FindControl<Button>("VodDownloadBtn") is { } downloadBtn && 
+            this.FindControl<Button>("VodCancelBtn") is { } cancelBtn)
+        {
+            if (isDownloading)
+            {
+                downloadBtn.IsVisible = false;
+                cancelBtn.IsVisible = true;
+            }
+            else
+            {
+                downloadBtn.IsVisible = true;
+                cancelBtn.IsVisible = false;
+            }
+        }
+    }
+
+    private void UpdateClipActionButtons(bool isDownloading)
+    {
+        if (this.FindControl<Button>("ClipDownloadBtn") is { } downloadBtn && 
+            this.FindControl<Button>("ClipCancelBtn") is { } cancelBtn)
+        {
+            if (isDownloading)
+            {
+                downloadBtn.IsVisible = false;
+                cancelBtn.IsVisible = true;
+            }
+            else
+            {
+                downloadBtn.IsVisible = true;
+                cancelBtn.IsVisible = false;
+            }
+        }
+    }
+
+    private void UpdateChatActionButtons(bool isDownloading)
+    {
+        if (this.FindControl<Button>("ChatDownloadBtn") is { } downloadBtn && 
+            this.FindControl<Button>("ChatCancelBtn") is { } cancelBtn)
+        {
+            if (isDownloading)
+            {
+                downloadBtn.IsVisible = false;
+                cancelBtn.IsVisible = true;
+            }
+            else
+            {
+                downloadBtn.IsVisible = true;
+                cancelBtn.IsVisible = false;
+            }
+        }
+    }
+
+    private void UpdateChatRenderActionButtons(bool isRendering)
+    {
+        if (this.FindControl<Button>("ChatRenderBtn") is { } renderBtn && 
+            this.FindControl<Button>("ChatRenderCancelBtn") is { } cancelBtn)
+        {
+            if (isRendering)
+            {
+                renderBtn.IsVisible = false;
+                cancelBtn.IsVisible = true;
+            }
+            else
+            {
+                renderBtn.IsVisible = true;
+                cancelBtn.IsVisible = false;
+            }
+        }
+    }
+
+    private void VodCancelBtnOnClickAsync(object? sender, RoutedEventArgs e)
+    {
+        var logBox = this.FindControl<TextBox>("VodLog");
+        AppendLog(logBox, "Canceling download...\n");
+        try
+        {
+            _vodCancellationTokenSource?.Cancel();
+        }
+        catch (ObjectDisposedException) { }
+    }
+
+    private void ClipCancelBtnOnClickAsync(object? sender, RoutedEventArgs e)
+    {
+        var logBox = this.FindControl<TextBox>("ClipLog");
+        AppendLog(logBox, "Canceling download...\n");
+        try
+        {
+            _clipCancellationTokenSource?.Cancel();
+        }
+        catch (ObjectDisposedException) { }
+    }
+
+    private void ChatCancelBtnOnClickAsync(object? sender, RoutedEventArgs e)
+    {
+        var logBox = this.FindControl<TextBox>("ChatLog");
+        AppendLog(logBox, "Canceling download...\n");
+        try
+        {
+            _chatCancellationTokenSource?.Cancel();
+        }
+        catch (ObjectDisposedException) { }
+    }
+
+    private void ChatRenderCancelBtnOnClickAsync(object? sender, RoutedEventArgs e)
+    {
+        var logBox = this.FindControl<TextBox>("ChatRenderLog");
+        AppendLog(logBox, "Canceling render...\n");
+        try
+        {
+            _chatRenderCancellationTokenSource?.Cancel();
+        }
+        catch (ObjectDisposedException) { }
     }
 
     private async void VodDownloadBtnOnClickAsync(object? sender, RoutedEventArgs e)
@@ -74,14 +497,31 @@ public partial class MainWindow : Window
             var endStr = this.FindControl<TextBox>("VodEnd")?.Text ?? "0:00:30";
             var output = (this.FindControl<TextBox>("VodOutput")?.Text ?? "vod_clip.mp4").Trim();
             if (string.IsNullOrWhiteSpace(Path.GetExtension(output))) output += ".mp4";
-            // If user provided a relative name, put it into ~/Downloads
-            if (!Path.IsPathRooted(output))
+            
+            // Show save file dialog
+            var fileExt = "mp4";
+            var saveFileDialog = await StorageProvider.SaveFilePickerAsync(new FilePickerSaveOptions
             {
-                var home = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
-                var downloads = Path.Combine(home, "Downloads");
-                var baseDir = Directory.Exists(downloads) ? downloads : home;
-                output = Path.Combine(baseDir, output);
+                Title = "Save VOD As",
+                SuggestedFileName = output,
+                DefaultExtension = fileExt,
+                FileTypeChoices = new[]
+                {
+                    new FilePickerFileType("MP4 Files")
+                    {
+                        Patterns = new[] { $"*.{fileExt}" },
+                        MimeTypes = new[] { $"video/{fileExt}" }
+                    }
+                }
+            });
+            
+            if (saveFileDialog == null)
+            {
+                AppendLog(logBox, "Download canceled.\n");
+                return;
             }
+            
+            output = saveFileDialog.Path.LocalPath;
             var outDir = Path.GetDirectoryName(output);
             if (!string.IsNullOrWhiteSpace(outDir)) Directory.CreateDirectory(outDir);
 
@@ -126,11 +566,29 @@ public partial class MainWindow : Window
 
             AppendLog(logBox, $"Starting VOD clip: {vodId} {quality} {start}->{end} -> {opts.Filename}\n");
 
-            using var cts = new CancellationTokenSource();
+            _vodCancellationTokenSource?.Dispose();
+            _vodCancellationTokenSource = new CancellationTokenSource();
+            UpdateVodActionButtons(true);
             var downloader = new VideoDownloader(opts, progress);
-            await downloader.DownloadAsync(cts.Token);
-
-            AppendLog(logBox, "Done.\n");
+            try
+            {
+                await downloader.DownloadAsync(_vodCancellationTokenSource.Token);
+                AppendLog(logBox, "Done.\n");
+            }
+            catch (OperationCanceledException)
+            {
+                AppendLog(logBox, "Download canceled.\n");
+            }
+            catch (Exception ex)
+            {
+                AppendLog(logBox, "Error: " + ex.Message + "\n");
+            }
+            finally
+            {
+                _vodCancellationTokenSource?.Dispose();
+                _vodCancellationTokenSource = null;
+                UpdateVodActionButtons(false);
+            }
         }
         catch (Exception ex)
         {
@@ -150,6 +608,14 @@ public partial class MainWindow : Window
                 return;
             }
             var oauth = this.FindControl<TextBox>("VodOauth")?.Text;
+
+            // Fetch video info for metadata/thumbnail and naming
+            TwitchDownloaderCore.TwitchObjects.Gql.GqlVideoResponse? videoInfo = null;
+            try
+            {
+                videoInfo = await TwitchHelper.GetVideoInfo(vodId);
+            }
+            catch { }
 
             // 1) Get access token
             TwitchDownloaderCore.TwitchObjects.Gql.GqlVideoTokenResponse token;
@@ -221,6 +687,28 @@ public partial class MainWindow : Window
 
             AppendLog(logBox, $"Loaded qualities: {string.Join(", ", names)}\n");
             UpdateVodEstimate();
+
+            // Thumbnail & suggested names
+            var thumbUrl = videoInfo?.data?.video?.thumbnailURLs?.FirstOrDefault();
+            await SetImageFromUrlAsync(this.FindControl<Image>("VodThumb"), thumbUrl);
+            if (this.FindControl<TextBlock>("VodTitle") is { } vodTitle2)
+                vodTitle2.Text = videoInfo?.data?.video?.title ?? string.Empty;
+            if (this.FindControl<TextBlock>("VodMeta") is { } vodMeta2)
+            {
+                var when = videoInfo?.data?.video?.createdAt.ToLocalTime().ToString("g");
+                var ch = videoInfo?.data?.video?.owner?.displayName ?? "";
+                var len = TimeSpan.FromSeconds(videoInfo?.data?.video?.lengthSeconds ?? 0);
+                vodMeta2.Text = $"{ch} · {when} · {len:c}";
+            }
+
+            var date = videoInfo?.data?.video?.createdAt.ToLocalTime().ToString("dd-MM-yyyy");
+            var channel = videoInfo?.data?.video?.owner?.displayName ?? "Twitch";
+            var vodName = SanitizeFileName($"[{date}] {channel} - VOD.mp4");
+            if (this.FindControl<TextBox>("VodOutput") is { } vodOut)
+            {
+                if (string.IsNullOrWhiteSpace(vodOut.Text) || vodOut.Text.Equals("vod_clip.mp4", StringComparison.OrdinalIgnoreCase))
+                    vodOut.Text = vodName;
+            }
         }
         catch (Exception ex)
         {
@@ -318,13 +806,37 @@ public partial class MainWindow : Window
             var output = (this.FindControl<TextBox>("ChatOutput")?.Text ?? "chat.json").Trim();
             var (fmt, comp, timeFmt) = GetChatSelectionsFromUi();
             output = EnsureChatOutputExtension(output, fmt, comp);
-            if (!Path.IsPathRooted(output))
+            
+            // Determine file extension based on format and compression
+            string fileExt = fmt.ToString().ToLower();
+            if (comp == ChatCompression.Gzip)
+                fileExt += ".gz";
+                
+            // Show save file dialog
+            var saveFileDialog = await StorageProvider.SaveFilePickerAsync(new FilePickerSaveOptions
             {
-                var home = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
-                var downloads = Path.Combine(home, "Downloads");
-                var baseDir = Directory.Exists(downloads) ? downloads : home;
-                output = Path.Combine(baseDir, output);
+                Title = "Save Chat As",
+                SuggestedFileName = output,
+                DefaultExtension = fileExt,
+                FileTypeChoices = new[]
+                {
+                    new FilePickerFileType(fmt.ToString() + " Files")
+                    {
+                        Patterns = new[] { $"*.{fileExt}" },
+                        MimeTypes = comp == ChatCompression.Gzip 
+                            ? new[] { "application/gzip" } 
+                            : new[] { "application/json", "text/html", "text/plain" }
+                    }
+                }
+            });
+            
+            if (saveFileDialog == null)
+            {
+                AppendLog(logBox, "Download canceled.\n");
+                return;
             }
+            
+            output = saveFileDialog.Path.LocalPath;
             Directory.CreateDirectory(Path.GetDirectoryName(output)!);
 
             // Times
@@ -366,16 +878,36 @@ public partial class MainWindow : Window
                 p => AppendLog(logBox, $"Progress: {p}%\n"));
 
             AppendLog(logBox, $"Starting Chat download: {normalizedId} -> {opts.Filename}\n");
-            using var cts = new CancellationTokenSource();
+            _chatCancellationTokenSource?.Dispose();
+            _chatCancellationTokenSource = new CancellationTokenSource();
+            UpdateChatActionButtons(true);
             var downloader = new ChatDownloader(opts, progress);
-            await downloader.DownloadAsync(cts.Token);
-            AppendLog(logBox, "Done.\n");
-
-            // Prefill Chat Render input with the just-downloaded file for convenience
-            var renderInput = this.FindControl<TextBox>("ChatRenderInput");
-            if (renderInput is not null)
+            try
             {
-                renderInput.Text = opts.Filename;
+                await downloader.DownloadAsync(_chatCancellationTokenSource.Token);
+                AppendLog(logBox, "Done.\n");
+                
+                // Prefill Chat Render input with the just-downloaded file for convenience
+                var renderInput = this.FindControl<TextBox>("ChatRenderInput");
+                if (renderInput is not null)
+                {
+                    renderInput.Text = opts.Filename;
+                }
+            }
+            catch (OperationCanceledException)
+            {
+                AppendLog(logBox, "Download canceled.\n");
+            }
+            catch (Exception ex)
+            {
+                AppendLog(logBox, "Error: " + ex.Message + "\n");
+                AppendLog(logBox, GetFriendlyHint(ex) + "\n");
+            }
+            finally
+            {
+                _chatCancellationTokenSource?.Dispose();
+                _chatCancellationTokenSource = null;
+                UpdateChatActionButtons(false);
             }
         }
         catch (Exception ex)
@@ -391,18 +923,34 @@ public partial class MainWindow : Window
         try
         {
             var input = (this.FindControl<TextBox>("ChatRenderInput")?.Text ?? string.Empty).Trim();
-            if (string.IsNullOrWhiteSpace(input))
+            if (string.IsNullOrWhiteSpace(input) || !File.Exists(input))
             {
-                AppendLog(logBox, "Provide an input chat JSON path (.json or .json.gz).\n");
-                return;
+                // Allow selecting input file
+                var openFileDialog = await StorageProvider.OpenFilePickerAsync(new FilePickerOpenOptions
+                {
+                    Title = "Select Chat JSON File",
+                    AllowMultiple = false,
+                    FileTypeFilter = new[]
+                    {
+                        new FilePickerFileType("JSON Files")
+                        {
+                            Patterns = new[] { "*.json", "*.json.gz" },
+                            MimeTypes = new[] { "application/json", "application/gzip" }
+                        }
+                    }
+                });
+                
+                if (openFileDialog == null || openFileDialog.Count == 0)
+                {
+                    AppendLog(logBox, "No input file selected\n");
+                    return;
+                }
+                
+                input = openFileDialog[0].Path.LocalPath;
+                if (this.FindControl<TextBox>("ChatRenderInput") is { } inputBox)
+                    inputBox.Text = input;
             }
-            if (!Path.IsPathRooted(input))
-            {
-                var home = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
-                var downloads = Path.Combine(home, "Downloads");
-                var baseDir = Directory.Exists(downloads) ? downloads : home;
-                input = Path.Combine(baseDir, input);
-            }
+            
             if (!File.Exists(input))
             {
                 AppendLog(logBox, $"Input not found: {input}\n");
@@ -411,36 +959,86 @@ public partial class MainWindow : Window
 
             var output = (this.FindControl<TextBox>("ChatRenderOutput")?.Text ?? "chat.mp4").Trim();
             if (string.IsNullOrWhiteSpace(Path.GetExtension(output))) output += ".mp4";
-            if (!Path.IsPathRooted(output))
+            
+            // Show save file dialog
+            var fileExt = "mp4";
+            var saveFileDialog = await StorageProvider.SaveFilePickerAsync(new FilePickerSaveOptions
             {
-                var home = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
-                var downloads = Path.Combine(home, "Downloads");
-                var baseDir = Directory.Exists(downloads) ? downloads : home;
-                output = Path.Combine(baseDir, output);
+                Title = "Save Chat Render As",
+                SuggestedFileName = output,
+                DefaultExtension = fileExt,
+                FileTypeChoices = new[]
+                {
+                    new FilePickerFileType("MP4 Files")
+                    {
+                        Patterns = new[] { $"*.{fileExt}" },
+                        MimeTypes = new[] { $"video/{fileExt}" }
+                    }
+                }
+            });
+            
+            if (saveFileDialog == null)
+            {
+                AppendLog(logBox, "Render canceled.\n");
+                return;
             }
+            
+            output = saveFileDialog.Path.LocalPath;
             Directory.CreateDirectory(Path.GetDirectoryName(output)!);
 
-            // Numeric options
-            _ = int.TryParse(this.FindControl<TextBox>("ChatWidth")?.Text ?? "350", out var chatWidth);
-            _ = int.TryParse(this.FindControl<TextBox>("ChatHeight")?.Text ?? "600", out var chatHeight);
-            _ = double.TryParse(this.FindControl<TextBox>("ChatFontSize")?.Text ?? "12", out var fontSize);
-            _ = int.TryParse(this.FindControl<TextBox>("ChatFramerate")?.Text ?? "30", out var fps);
-            var fontName = (this.FindControl<TextBox>("ChatFont")?.Text ?? "Inter Embedded").Trim();
+            // Load settings from UI or use saved settings
+            _ = int.TryParse(this.FindControl<TextBox>("ChatWidth")?.Text, out var chatWidth);
+            if (chatWidth <= 0) chatWidth = Services.SettingsService.Settings.ChatWidth;
+            
+            _ = int.TryParse(this.FindControl<TextBox>("ChatHeight")?.Text, out var chatHeight);
+            if (chatHeight <= 0) chatHeight = Services.SettingsService.Settings.ChatHeight;
+            
+            _ = double.TryParse(this.FindControl<TextBox>("ChatFontSize")?.Text, out var fontSize);
+            if (fontSize <= 0) fontSize = Services.SettingsService.Settings.ChatFontSize;
+            
+            _ = int.TryParse(this.FindControl<TextBox>("ChatFramerate")?.Text, out var fps);
+            if (fps <= 0) fps = Services.SettingsService.Settings.ChatFramerate;
+            
+            var fontName = (this.FindControl<TextBox>("ChatFont")?.Text ?? Services.SettingsService.Settings.ChatFont).Trim();
+            if (string.IsNullOrWhiteSpace(fontName)) fontName = "Inter Embedded";
 
             // Colors
-            var bg = ParseColorHex(this.FindControl<TextBox>("ChatBgColor")?.Text, "#111111");
-            var altBg = ParseColorHex(this.FindControl<TextBox>("ChatAltBgColor")?.Text, "#191919");
-            var msgColor = ParseColorHex(this.FindControl<TextBox>("ChatMsgColor")?.Text, "#ffffff");
+            var bgText = this.FindControl<TextBox>("ChatBgColor")?.Text ?? Services.SettingsService.Settings.ChatBgColor;
+            var altBgText = this.FindControl<TextBox>("ChatAltBgColor")?.Text ?? Services.SettingsService.Settings.ChatAltBgColor;
+            var msgColorText = this.FindControl<TextBox>("ChatMsgColor")?.Text ?? Services.SettingsService.Settings.ChatMsgColor;
+            
+            var bg = ParseColorHex(bgText, "#111111");
+            var altBg = ParseColorHex(altBgText, "#191919");
+            var msgColor = ParseColorHex(msgColorText, "#ffffff");
 
-            var outline = this.FindControl<CheckBox>("ChatOutline")?.IsChecked == true;
-            var altBackgrounds = this.FindControl<CheckBox>("ChatAltBackgrounds")?.IsChecked == true;
-            var timestamps = this.FindControl<CheckBox>("ChatTimestamps")?.IsChecked == true;
-            var badges = this.FindControl<CheckBox>("ChatBadges")?.IsChecked ?? true;
-            var avatars = this.FindControl<CheckBox>("ChatAvatars")?.IsChecked == true;
+            var outline = this.FindControl<CheckBox>("ChatOutline")?.IsChecked ?? Services.SettingsService.Settings.ChatOutline;
+            var altBackgrounds = this.FindControl<CheckBox>("ChatAltBackgrounds")?.IsChecked ?? Services.SettingsService.Settings.ChatAltBackgrounds;
+            var timestamps = this.FindControl<CheckBox>("ChatTimestamps")?.IsChecked ?? Services.SettingsService.Settings.ChatTimestamps;
+            var badges = this.FindControl<CheckBox>("ChatBadges")?.IsChecked ?? Services.SettingsService.Settings.ChatBadges;
+            var avatars = this.FindControl<CheckBox>("ChatAvatars")?.IsChecked ?? Services.SettingsService.Settings.ChatAvatars;
 
-            var bttv = this.FindControl<CheckBox>("ChatBttv")?.IsChecked ?? true;
-            var ffz = this.FindControl<CheckBox>("ChatFfz")?.IsChecked ?? true;
-            var stv = this.FindControl<CheckBox>("ChatStv")?.IsChecked ?? true;
+            var bttv = this.FindControl<CheckBox>("ChatBttv")?.IsChecked ?? Services.SettingsService.Settings.ChatBttv;
+            var ffz = this.FindControl<CheckBox>("ChatFfz")?.IsChecked ?? Services.SettingsService.Settings.ChatFfz;
+            var stv = this.FindControl<CheckBox>("ChatStv")?.IsChecked ?? Services.SettingsService.Settings.ChatStv;
+            
+            // Save settings for next time
+            Services.SettingsService.Settings.ChatWidth = chatWidth;
+            Services.SettingsService.Settings.ChatHeight = chatHeight;
+            Services.SettingsService.Settings.ChatFontSize = fontSize;
+            Services.SettingsService.Settings.ChatFramerate = fps;
+            Services.SettingsService.Settings.ChatFont = fontName;
+            Services.SettingsService.Settings.ChatBgColor = bgText;
+            Services.SettingsService.Settings.ChatAltBgColor = altBgText;
+            Services.SettingsService.Settings.ChatMsgColor = msgColorText;
+            Services.SettingsService.Settings.ChatOutline = outline;
+            Services.SettingsService.Settings.ChatAltBackgrounds = altBackgrounds;
+            Services.SettingsService.Settings.ChatTimestamps = timestamps;
+            Services.SettingsService.Settings.ChatBadges = badges;
+            Services.SettingsService.Settings.ChatAvatars = avatars;
+            Services.SettingsService.Settings.ChatBttv = bttv;
+            Services.SettingsService.Settings.ChatFfz = ffz;
+            Services.SettingsService.Settings.ChatStv = stv;
+            Services.SettingsService.SaveSettings();
 
             var ffmpegPath = await _ffmpeg.GetPreferredFfmpegPathAsync();
 
@@ -484,13 +1082,35 @@ public partial class MainWindow : Window
                 p => AppendLog(logBox, $"Progress: {p}%\n"));
 
             AppendLog(logBox, $"Parsing chat: {renderOpts.InputFile}\n");
-            using var cts = new CancellationTokenSource();
+            _chatRenderCancellationTokenSource?.Dispose();
+            _chatRenderCancellationTokenSource = new CancellationTokenSource();
+            UpdateChatRenderActionButtons(true);
             var renderer = new ChatRenderer(renderOpts, progress);
-            await renderer.ParseJsonAsync(cts.Token);
-            AppendLog(logBox, $"Rendering to: {renderOpts.OutputFile}\n");
-            await renderer.RenderVideoAsync(cts.Token);
-            renderer.Dispose();
-            AppendLog(logBox, "Done.\n");
+            try
+            {
+                await renderer.ParseJsonAsync(_chatRenderCancellationTokenSource.Token);
+                AppendLog(logBox, $"Rendering to: {renderOpts.OutputFile}\n");
+                await renderer.RenderVideoAsync(_chatRenderCancellationTokenSource.Token);
+                renderer.Dispose();
+                AppendLog(logBox, "Done.\n");
+            }
+            catch (OperationCanceledException)
+            {
+                AppendLog(logBox, "Render canceled.\n");
+                renderer.Dispose();
+            }
+            catch (Exception ex)
+            {
+                AppendLog(logBox, "Error: " + ex.Message + "\n");
+                AppendLog(logBox, GetFriendlyHint(ex) + "\n");
+                renderer.Dispose();
+            }
+            finally
+            {
+                _chatRenderCancellationTokenSource?.Dispose();
+                _chatRenderCancellationTokenSource = null;
+                UpdateChatRenderActionButtons(false);
+            }
         }
         catch (Exception ex)
         {
@@ -575,16 +1195,34 @@ public partial class MainWindow : Window
                 return;
             }
 
-            var quality = (this.FindControl<TextBox>("ClipQuality")?.Text ?? "1080p60").Trim();
+            var quality = (this.FindControl<ComboBox>("ClipQualityCombo")?.SelectedItem as string) ?? "1080p60";
             var output = (this.FindControl<TextBox>("ClipOutput")?.Text ?? "clip.mp4").Trim();
             if (string.IsNullOrWhiteSpace(Path.GetExtension(output))) output += ".mp4";
-            if (!Path.IsPathRooted(output))
+            
+            // Show save file dialog
+            var fileExt = "mp4";
+            var saveFileDialog = await StorageProvider.SaveFilePickerAsync(new FilePickerSaveOptions
             {
-                var home = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
-                var downloads = Path.Combine(home, "Downloads");
-                var baseDir = Directory.Exists(downloads) ? downloads : home;
-                output = Path.Combine(baseDir, output);
+                Title = "Save Clip As",
+                SuggestedFileName = output,
+                DefaultExtension = fileExt,
+                FileTypeChoices = new[]
+                {
+                    new FilePickerFileType("MP4 Files")
+                    {
+                        Patterns = new[] { $"*.{fileExt}" },
+                        MimeTypes = new[] { $"video/{fileExt}" }
+                    }
+                }
+            });
+            
+            if (saveFileDialog == null)
+            {
+                AppendLog(logBox, "Download canceled.\n");
+                return;
             }
+            
+            output = saveFileDialog.Path.LocalPath;
             var outDir = Path.GetDirectoryName(output);
             if (!string.IsNullOrWhiteSpace(outDir)) Directory.CreateDirectory(outDir);
 
@@ -606,10 +1244,29 @@ public partial class MainWindow : Window
                 (p) => AppendLog(logBox, $"Progress: {p}%\n"));
 
             AppendLog(logBox, $"Starting Clip download: {clipId} {quality} -> {opts.Filename}\n");
-            using var cts = new CancellationTokenSource();
+            _clipCancellationTokenSource?.Dispose();
+            _clipCancellationTokenSource = new CancellationTokenSource();
+            UpdateClipActionButtons(true);
             var downloader = new ClipDownloader(opts, progress);
-            await downloader.DownloadAsync(cts.Token);
-            AppendLog(logBox, "Done.\n");
+            try
+            {
+                await downloader.DownloadAsync(_clipCancellationTokenSource.Token);
+                AppendLog(logBox, "Done.\n");
+            }
+            catch (OperationCanceledException)
+            {
+                AppendLog(logBox, "Download canceled.\n");
+            }
+            catch (Exception ex)
+            {
+                AppendLog(logBox, "Error: " + ex.Message + "\n");
+            }
+            finally
+            {
+                _clipCancellationTokenSource?.Dispose();
+                _clipCancellationTokenSource = null;
+                UpdateClipActionButtons(false);
+            }
         }
         catch (Exception ex)
         {

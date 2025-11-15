@@ -17,6 +17,15 @@
             <StackPanel Orientation="Horizontal" Spacing="8">
               <Button x:Name="VodLoadInfoBtn" Content="Load Info / Qualities"/>
             </StackPanel>
+            <StackPanel Orientation="Horizontal" Spacing="12" VerticalAlignment="Center">
+              <Border BorderBrush="#333" BorderThickness="1" CornerRadius="6">
+                <Image x:Name="VodThumb" Width="320" Height="180" Stretch="UniformToFill"/>
+              </Border>
+              <StackPanel Spacing="4" VerticalAlignment="Center">
+                <TextBlock x:Name="VodTitle" FontWeight="Bold"/>
+                <TextBlock x:Name="VodMeta" Foreground="#aaa"/>
+              </StackPanel>
+            </StackPanel>
             <StackPanel Orientation="Horizontal" Spacing="8">
               <StackPanel Width="200">
                 <TextBlock Text="Quality"/>
@@ -56,6 +65,7 @@
             <TextBlock TextWrapping="Wrap" Foreground="#aaa" Text="Tip: For clip URLs, use the 'Clip Download' tab. This VOD tab is for /videos/&lt;id&gt; (VOD/highlight)."/>
             <StackPanel Orientation="Horizontal" Spacing="8">
               <Button x:Name="VodDownloadBtn" Content="Download Clip"/>
+              <Button x:Name="VodCancelBtn" Content="Cancel" IsVisible="False"/>
             </StackPanel>
             <TextBlock Text="Log"/>
             <TextBox x:Name="VodLog" IsReadOnly="True" AcceptsReturn="True" Height="220"/>
@@ -69,9 +79,21 @@
             <TextBlock Text="Clip URL or ID"/>
             <TextBox x:Name="ClipId"/>
             <StackPanel Orientation="Horizontal" Spacing="8">
+              <Button x:Name="ClipLoadInfoBtn" Content="Load Info / Qualities"/>
+            </StackPanel>
+            <StackPanel Orientation="Horizontal" Spacing="12" VerticalAlignment="Center">
+              <Border BorderBrush="#333" BorderThickness="1" CornerRadius="6">
+                <Image x:Name="ClipThumb" Width="320" Height="180" Stretch="UniformToFill"/>
+              </Border>
+              <StackPanel Spacing="4" VerticalAlignment="Center">
+                <TextBlock x:Name="ClipTitle" FontWeight="Bold"/>
+                <TextBlock x:Name="ClipMeta" Foreground="#aaa"/>
+              </StackPanel>
+            </StackPanel>
+            <StackPanel Orientation="Horizontal" Spacing="8">
               <StackPanel Width="200">
                 <TextBlock Text="Quality"/>
-                <TextBox x:Name="ClipQuality" Text="1080p60"/>
+                <ComboBox x:Name="ClipQualityCombo" MinWidth="180"/>
               </StackPanel>
               <StackPanel Width="300">
                 <TextBlock Text="Output"/>
@@ -80,6 +102,7 @@
             </StackPanel>
             <StackPanel Orientation="Horizontal" Spacing="8">
               <Button x:Name="ClipDownloadBtn" Content="Download Clip"/>
+              <Button x:Name="ClipCancelBtn" Content="Cancel" IsVisible="False"/>
             </StackPanel>
             <TextBlock Text="Log"/>
             <TextBox x:Name="ClipLog" IsReadOnly="True" AcceptsReturn="True" Height="220"/>
@@ -92,6 +115,18 @@
           <StackPanel Margin="12" Spacing="8">
             <TextBlock Text="VOD/Clip URL or ID"/>
             <TextBox x:Name="ChatId"/>
+            <StackPanel Orientation="Horizontal" Spacing="8">
+              <Button x:Name="ChatLoadInfoBtn" Content="Load Info"/>
+            </StackPanel>
+            <StackPanel Orientation="Horizontal" Spacing="12" VerticalAlignment="Center">
+              <Border BorderBrush="#333" BorderThickness="1" CornerRadius="6">
+                <Image x:Name="ChatThumb" Width="320" Height="180" Stretch="UniformToFill"/>
+              </Border>
+              <StackPanel Spacing="4" VerticalAlignment="Center">
+                <TextBlock x:Name="ChatTitle" FontWeight="Bold"/>
+                <TextBlock x:Name="ChatMeta" Foreground="#aaa"/>
+              </StackPanel>
+            </StackPanel>
 
             <StackPanel Orientation="Horizontal" Spacing="8">
               <StackPanel Width="160">
@@ -148,6 +183,7 @@
 
             <StackPanel Orientation="Horizontal" Spacing="8">
               <Button x:Name="ChatDownloadBtn" Content="Download Chat"/>
+              <Button x:Name="ChatCancelBtn" Content="Cancel" IsVisible="False"/>
             </StackPanel>
 
             <TextBlock Text="Log"/>
@@ -218,6 +254,7 @@
 
             <StackPanel Orientation="Horizontal" Spacing="8">
               <Button x:Name="ChatRenderBtn" Content="Render Chat"/>
+              <Button x:Name="ChatRenderCancelBtn" Content="Cancel" IsVisible="False"/>
             </StackPanel>
 
             <TextBlock Text="Log"/>
