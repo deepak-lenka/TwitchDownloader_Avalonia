@@ -1085,27 +1085,28 @@ public partial class MainWindow : Window
             _chatRenderCancellationTokenSource?.Dispose();
             _chatRenderCancellationTokenSource = new CancellationTokenSource();
             UpdateChatRenderActionButtons(true);
-            ChatRenderer? renderer = null;
+            var renderer = new ChatRenderer(renderOpts, progress);
             try
             {
-                renderer = new ChatRenderer(renderOpts, progress);
                 await renderer.ParseJsonAsync(_chatRenderCancellationTokenSource.Token);
                 AppendLog(logBox, $"Rendering to: {renderOpts.OutputFile}\n");
                 await renderer.RenderVideoAsync(_chatRenderCancellationTokenSource.Token);
+                renderer.Dispose();
                 AppendLog(logBox, "Done.\n");
             }
             catch (OperationCanceledException)
             {
                 AppendLog(logBox, "Render canceled.\n");
+                renderer.Dispose();
             }
             catch (Exception ex)
             {
                 AppendLog(logBox, "Error: " + ex.Message + "\n");
                 AppendLog(logBox, GetFriendlyHint(ex) + "\n");
+                renderer.Dispose();
             }
             finally
             {
-                try { renderer?.Dispose(); } catch { /* Ignore disposal errors */ }
                 _chatRenderCancellationTokenSource?.Dispose();
                 _chatRenderCancellationTokenSource = null;
                 UpdateChatRenderActionButtons(false);
