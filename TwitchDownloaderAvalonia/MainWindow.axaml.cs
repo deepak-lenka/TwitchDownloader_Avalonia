@@ -557,12 +557,23 @@ public partial class MainWindow : Window
                 FfmpegPath = ffmpegPath,
                 TempFolder = null,
                 TrimMode = trimMode,
-                DelayDownload = false
+                DelayDownload = false,
+                CacheCleanerCallback = dirs => dirs // Auto-delete all abandoned caches
             };
 
-            var progress = new Services.UiTaskProgress(msg => AppendLog(logBox, msg + "\n"),
-                (status) => AppendLog(logBox, status + "\n"),
-                (p) => AppendLog(logBox, $"Progress: {p}%\n"));
+            var progress = new Services.UiTaskProgress(
+                msg => Dispatcher.UIThread.Post(() => {
+                    var log = this.FindControl<TextBox>("VodLog");
+                    if (log != null) { log.Text += msg + "\n"; log.CaretIndex = log.Text?.Length ?? 0; }
+                }),
+                status => Dispatcher.UIThread.Post(() => {
+                    var log = this.FindControl<TextBox>("VodLog");
+                    if (log != null) { log.Text += status + "\n"; log.CaretIndex = log.Text?.Length ?? 0; }
+                }),
+                p => Dispatcher.UIThread.Post(() => {
+                    var log = this.FindControl<TextBox>("VodLog");
+                    if (log != null) { log.Text += $"Progress: {p}%\n"; log.CaretIndex = log.Text?.Length ?? 0; }
+                }));
 
             AppendLog(logBox, $"Starting VOD clip: {vodId} {quality} {start}->{end} -> {opts.Filename}\n");
 
@@ -581,7 +592,8 @@ public partial class MainWindow : Window
             }
             catch (Exception ex)
             {
-                AppendLog(logBox, "Error: " + ex.Message + "\n");
+                AppendLog(logBox, $"Error: {ex.Message}\n");
+                AppendLog(logBox, $"Stack trace: {ex.StackTrace}\n");
             }
             finally
             {
@@ -592,7 +604,8 @@ public partial class MainWindow : Window
         }
         catch (Exception ex)
         {
-            AppendLog(logBox, "Error: " + ex.Message + "\n");
+            AppendLog(logBox, $"Error: {ex.Message}\n");
+            AppendLog(logBox, $"Stack trace: {ex.StackTrace}\n");
         }
     }
 
@@ -873,9 +886,19 @@ public partial class MainWindow : Window
                 DelayDownload = false
             };
 
-            var progress = new Services.UiTaskProgress(msg => AppendLog(logBox, msg + "\n"),
-                status => AppendLog(logBox, status + "\n"),
-                p => AppendLog(logBox, $"Progress: {p}%\n"));
+            var progress = new Services.UiTaskProgress(
+                msg => Dispatcher.UIThread.Post(() => {
+                    var log = this.FindControl<TextBox>("ChatLog");
+                    if (log != null) { log.Text += msg + "\n"; log.CaretIndex = log.Text?.Length ?? 0; }
+                }),
+                status => Dispatcher.UIThread.Post(() => {
+                    var log = this.FindControl<TextBox>("ChatLog");
+                    if (log != null) { log.Text += status + "\n"; log.CaretIndex = log.Text?.Length ?? 0; }
+                }),
+                p => Dispatcher.UIThread.Post(() => {
+                    var log = this.FindControl<TextBox>("ChatLog");
+                    if (log != null) { log.Text += $"Progress: {p}%\n"; log.CaretIndex = log.Text?.Length ?? 0; }
+                }));
 
             AppendLog(logBox, $"Starting Chat download: {normalizedId} -> {opts.Filename}\n");
             _chatCancellationTokenSource?.Dispose();
@@ -900,7 +923,8 @@ public partial class MainWindow : Window
             }
             catch (Exception ex)
             {
-                AppendLog(logBox, "Error: " + ex.Message + "\n");
+                AppendLog(logBox, $"Error: {ex.Message}\n");
+                AppendLog(logBox, $"Stack trace: {ex.StackTrace}\n");
                 AppendLog(logBox, GetFriendlyHint(ex) + "\n");
             }
             finally
@@ -912,7 +936,8 @@ public partial class MainWindow : Window
         }
         catch (Exception ex)
         {
-            AppendLog(logBox, "Error: " + ex.Message + "\n");
+            AppendLog(logBox, $"Error: {ex.Message}\n");
+            AppendLog(logBox, $"Stack trace: {ex.StackTrace}\n");
             AppendLog(logBox, GetFriendlyHint(ex) + "\n");
         }
     }
@@ -1077,9 +1102,19 @@ public partial class MainWindow : Window
                 AdjustUsernameVisibility = true
             };
 
-            var progress = new Services.UiTaskProgress(msg => AppendLog(logBox, msg + "\n"),
-                status => AppendLog(logBox, status + "\n"),
-                p => AppendLog(logBox, $"Progress: {p}%\n"));
+            var progress = new Services.UiTaskProgress(
+                msg => Dispatcher.UIThread.Post(() => {
+                    var log = this.FindControl<TextBox>("ChatRenderLog");
+                    if (log != null) { log.Text += msg + "\n"; log.CaretIndex = log.Text?.Length ?? 0; }
+                }),
+                status => Dispatcher.UIThread.Post(() => {
+                    var log = this.FindControl<TextBox>("ChatRenderLog");
+                    if (log != null) { log.Text += status + "\n"; log.CaretIndex = log.Text?.Length ?? 0; }
+                }),
+                p => Dispatcher.UIThread.Post(() => {
+                    var log = this.FindControl<TextBox>("ChatRenderLog");
+                    if (log != null) { log.Text += $"Progress: {p}%\n"; log.CaretIndex = log.Text?.Length ?? 0; }
+                }));
 
             AppendLog(logBox, $"Parsing chat: {renderOpts.InputFile}\n");
             _chatRenderCancellationTokenSource?.Dispose();
@@ -1239,9 +1274,19 @@ public partial class MainWindow : Window
                 FfmpegPath = ffmpegPath
             };
 
-            var progress = new Services.UiTaskProgress(msg => AppendLog(logBox, msg + "\n"),
-                (status) => AppendLog(logBox, status + "\n"),
-                (p) => AppendLog(logBox, $"Progress: {p}%\n"));
+            var progress = new Services.UiTaskProgress(
+                msg => Dispatcher.UIThread.Post(() => {
+                    var log = this.FindControl<TextBox>("ClipLog");
+                    if (log != null) { log.Text += msg + "\n"; log.CaretIndex = log.Text?.Length ?? 0; }
+                }),
+                status => Dispatcher.UIThread.Post(() => {
+                    var log = this.FindControl<TextBox>("ClipLog");
+                    if (log != null) { log.Text += status + "\n"; log.CaretIndex = log.Text?.Length ?? 0; }
+                }),
+                p => Dispatcher.UIThread.Post(() => {
+                    var log = this.FindControl<TextBox>("ClipLog");
+                    if (log != null) { log.Text += $"Progress: {p}%\n"; log.CaretIndex = log.Text?.Length ?? 0; }
+                }));
 
             AppendLog(logBox, $"Starting Clip download: {clipId} {quality} -> {opts.Filename}\n");
             _clipCancellationTokenSource?.Dispose();

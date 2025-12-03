@@ -1327,6 +1327,22 @@ namespace TwitchDownloaderCore
             response.EnsureSuccessStatusCode();
 
             var chapterResponse = await response.Content.ReadFromJsonAsync<GqlVideoChapterResponse>();
+
+            if (chapterResponse?.data?.video == null)
+            {
+                return new GqlVideoChapterResponse
+                {
+                    data = new ChapterData
+                    {
+                        video = new ChapterVideo
+                        {
+                            id = videoId.ToString(),
+                            moments = new VideoMomentConnection { edges = new List<VideoMomentEdge>() }
+                        }
+                    }
+                };
+            }
+
             chapterResponse.data.video.moments ??= new VideoMomentConnection { edges = new List<VideoMomentEdge>() };
 
             // For some reason durations can be negative sometimes

@@ -42,31 +42,34 @@ public sealed class UiTaskProgress : ITaskProgress
 
     public void ReportProgress(int percent)
     {
-        // Only update if percent changed AND enough time has elapsed (or it's the first update)
-        if (_lastPercent == percent && _progressThrottle.ElapsedMilliseconds < PROGRESS_UPDATE_INTERVAL_MS)
+        if (_lastPercent == percent)
         {
             return;
         }
 
-        _onPercent?.Invoke(percent);
-        _lastPercent = percent;
-        _progressThrottle.Restart();
+        if (percent == 0 || percent == 100 || _progressThrottle.ElapsedMilliseconds >= PROGRESS_UPDATE_INTERVAL_MS)
+        {
+            _onPercent?.Invoke(percent);
+            _lastPercent = percent;
+            _progressThrottle.Restart();
+        }
     }
 
     public void ReportProgress(int percent, TimeSpan time1, TimeSpan time2)
     {
-        // Only update if values changed AND enough time has elapsed (or it's the first update)
-        if (_lastPercent == percent && _lastTime1 == time1 && _lastTime2 == time2 
-            && _progressThrottle.ElapsedMilliseconds < PROGRESS_UPDATE_INTERVAL_MS)
+        if (_lastPercent == percent && _lastTime1 == time1 && _lastTime2 == time2)
         {
             return;
         }
 
-        _onPercent?.Invoke(percent);
-        _lastPercent = percent;
-        _lastTime1 = time1;
-        _lastTime2 = time2;
-        _progressThrottle.Restart();
+        if (percent == 0 || percent == 100 || _progressThrottle.ElapsedMilliseconds >= PROGRESS_UPDATE_INTERVAL_MS)
+        {
+            _onPercent?.Invoke(percent);
+            _lastPercent = percent;
+            _lastTime1 = time1;
+            _lastTime2 = time2;
+            _progressThrottle.Restart();
+        }
     }
 
     public void LogVerbose(string logMessage) => _onLog?.Invoke(logMessage);
@@ -85,5 +88,10 @@ public sealed class UiTaskProgress : ITaskProgress
 
     public void LogError(DefaultInterpolatedStringHandler logMessage) => _onLog?.Invoke("[ERROR] " + logMessage.ToStringAndClear());
 
-    public void LogFfmpeg(string logMessage) => _onLog?.Invoke("[FFMPEG] " + logMessage);
+    public void LogFfmpeg(string logMessage)
+    {
+        // Filter out verbose libx264 encoding stats
+        if (logMessage.Contains("libx264 @")) return;
+        _onLog?.Invoke("[FFMPEG] " + logMessage);
+    }
 }
