@@ -29,8 +29,15 @@ namespace TwitchDownloaderCore
     {
         private static readonly HttpClient httpClient = new()
         {
-            Timeout = TimeSpan.FromSeconds(20)
+            Timeout = TimeSpan.FromSeconds(30)
         };
+
+        private static readonly HttpClient stvHttpClient = new()
+        {
+            Timeout = TimeSpan.FromSeconds(45)
+        };
+
+        private const int STV_MAX_RETRIES = 3;
 
         private static readonly string[] BttvZeroWidth = { "SoSnowy", "IceCold", "SantaHat", "TopHat", "ReinDeer", "CandyCane", "cvMask", "cvHazmat" };
         private const string SEVEN_TV_PROXY_HOST = "7tv-imageproxy.twitcharchives.workers.dev";
@@ -152,7 +159,7 @@ namespace TwitchDownloaderCore
             response.EnsureSuccessStatusCode();
 
             var gqlClipTokenResponses = await response.Content.ReadFromJsonAsync<GqlClipTokenResponse>();
-            if (gqlClipTokenResponses.data.clip.videoQualities is { Length: > 0 })
+            if (gqlClipTokenResponses?.data?.clip?.videoQualities is { Length: > 0 })
             {
                 Array.Sort(gqlClipTokenResponses.data.clip.videoQualities, new ClipQualityComparer());
             }
@@ -173,11 +180,14 @@ namespace TwitchDownloaderCore
             response.EnsureSuccessStatusCode();
 
             var renderStatusResponse = await response.Content.ReadFromJsonAsync<GqlShareClipRenderStatusResponse>();
-            if (renderStatusResponse.data.clip.assets is not null)
+            if (renderStatusResponse?.data?.clip?.assets != null)
             {
                 foreach (var asset in renderStatusResponse.data.clip.assets)
                 {
-                    Array.Sort(asset.videoQualities, new ClipVideoQualityComparer());
+                    if (asset.videoQualities != null)
+                    {
+                        Array.Sort(asset.videoQualities, new ClipVideoQualityComparer());
+                    }
                 }
             }
 
@@ -341,29 +351,83 @@ namespace TwitchDownloaderCore
             return returnList;
         }
 
-        private static async Task<List<EmoteResponseItem>> GetStvEmotesMetadata(int streamerId, bool allowUnlistedEmotes, ITaskLogger logger, CancellationToken cancellationToken)
+        private static async Task<List<STVEmote>> FetchStvGlobalEmotes(ITaskLogger logger, CancellationToken cancellationToken)
         {
-            var globalEmoteRequest = new HttpRequestMessage(HttpMethod.Get, new Uri("https://7tv.io/v3/emote-sets/global", UriKind.Absolute));
-            using var globalEmoteResponse = await httpClient.SendAsync(globalEmoteRequest, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
-            globalEmoteResponse.EnsureSuccessStatusCode();
-            var globalEmoteObject = await globalEmoteResponse.Content.ReadFromJsonAsync<STVGlobalEmoteResponse>(cancellationToken: cancellationToken);
-            var stvEmotes = globalEmoteObject.emotes;
-
-            // Channel might not be registered on 7tv
-            try
+            for (int attempt = 1; attempt <= STV_MAX_RETRIES; attempt++)
             {
-                var streamerEmoteRequest = new HttpRequestMessage(HttpMethod.Get, new Uri($"https://7tv.io/v3/users/twitch/{streamerId}", UriKind.Absolute));
-                using var streamerEmoteResponse = await httpClient.SendAsync(streamerEmoteRequest, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
-                streamerEmoteResponse.EnsureSuccessStatusCode();
-
-                var streamerEmoteObject = await streamerEmoteResponse.Content.ReadFromJsonAsync<STVChannelEmoteResponse>(cancellationToken: cancellationToken);
-                // Channel might not have emotes setup
-                if (streamerEmoteObject.emote_set?.emotes != null)
+                try
                 {
-                    stvEmotes.AddRange(streamerEmoteObject.emote_set.emotes);
+                    var request = new HttpRequestMessage(HttpMethod.Get, new Uri("https://7tv.io/v3/emote-sets/global", UriKind.Absolute));
+                    using var response = await stvHttpClient.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
+                    response.EnsureSuccessStatusCode();
+                    var obj = await response.Content.ReadFromJsonAsync<STVGlobalEmoteResponse>(cancellationToken: cancellationToken);
+                    return obj?.emotes ?? new List<STVEmote>();
+                }
+                catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+                {
+                    throw;
+                }
+                catch (Exception ex) when (ex is TaskCanceledException || ex is HttpRequestException)
+                {
+                    if (attempt == STV_MAX_RETRIES)
+                        throw;
+
+                    var delaySec = attempt * 2;
+                    logger.LogInfo($"7TV global emotes attempt {attempt}/{STV_MAX_RETRIES} failed ({ex.GetType().Name}), retrying in {delaySec}s...");
+                    await Task.Delay(TimeSpan.FromSeconds(delaySec), cancellationToken);
                 }
             }
-            catch (HttpRequestException ex) when (ex.StatusCode == HttpStatusCode.NotFound) { }
+            return new List<STVEmote>();
+        }
+
+        private static async Task<List<STVEmote>> FetchStvChannelEmotes(int streamerId, ITaskLogger logger, CancellationToken cancellationToken)
+        {
+            for (int attempt = 1; attempt <= STV_MAX_RETRIES; attempt++)
+            {
+                try
+                {
+                    var request = new HttpRequestMessage(HttpMethod.Get, new Uri($"https://7tv.io/v3/users/twitch/{streamerId}", UriKind.Absolute));
+                    using var response = await stvHttpClient.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
+                    response.EnsureSuccessStatusCode();
+                    var obj = await response.Content.ReadFromJsonAsync<STVChannelEmoteResponse>(cancellationToken: cancellationToken);
+                    return obj?.emote_set?.emotes ?? new List<STVEmote>();
+                }
+                catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+                {
+                    throw;
+                }
+                catch (HttpRequestException ex) when (ex.StatusCode == HttpStatusCode.NotFound)
+                {
+                    return null;
+                }
+                catch (Exception ex) when (ex is TaskCanceledException || ex is HttpRequestException)
+                {
+                    if (attempt == STV_MAX_RETRIES)
+                    {
+                        logger.LogInfo($"7TV channel emotes failed after {STV_MAX_RETRIES} attempts ({ex.GetType().Name}). Continuing without channel emotes.");
+                        return null;
+                    }
+
+                    var delaySec = attempt * 2;
+                    logger.LogInfo($"7TV channel emotes attempt {attempt}/{STV_MAX_RETRIES} failed ({ex.GetType().Name}), retrying in {delaySec}s...");
+                    await Task.Delay(TimeSpan.FromSeconds(delaySec), cancellationToken);
+                }
+            }
+            return null;
+        }
+
+        private static async Task<List<EmoteResponseItem>> GetStvEmotesMetadata(int streamerId, bool allowUnlistedEmotes, ITaskLogger logger, CancellationToken cancellationToken)
+        {
+            // Fetch global and channel emote sets in parallel to reduce latency
+            var globalTask = FetchStvGlobalEmotes(logger, cancellationToken);
+            var channelTask = FetchStvChannelEmotes(streamerId, logger, cancellationToken);
+
+            await Task.WhenAll(globalTask, channelTask);
+
+            var stvEmotes = globalTask.Result ?? new List<STVEmote>();
+            var channelEmotes = channelTask.Result;
+            if (channelEmotes != null)
+                stvEmotes.AddRange(channelEmotes);
 
             var returnList = new List<EmoteResponseItem>();
             foreach (var stvEmote in stvEmotes)
@@ -471,11 +535,29 @@ namespace TwitchDownloaderCore
 
             EmoteResponse emoteDataResponse = await GetThirdPartyEmotesMetadata(streamerId, bttv, ffz, stv, allowUnlistedEmotes, logger, cancellationToken);
 
+            // Pre-extract all unique words from comments once: O(comments)
+            // Reused across all 3 providers instead of rebuilding per-provider
+            HashSet<string> usedWords = null;
+            if (comments != null)
+            {
+                usedWords = new HashSet<string>();
+                foreach (var comment in comments)
+                {
+                    if (comment.message.body is null)
+                        continue;
+
+                    foreach (var word in comment.message.body.Split(' ', StringSplitOptions.RemoveEmptyEntries))
+                    {
+                        usedWords.Add(word);
+                    }
+                }
+            }
+
             if (bttv)
             {
                 try
                 {
-                    await FetchEmoteImages(comments, emoteDataResponse.BTTV, emotes, bttvFolder, logger, cancellationToken);
+                    await FetchEmoteImages(usedWords, emoteDataResponse.BTTV, emotes, bttvFolder, logger, cancellationToken);
                 }
                 catch (Exception ex)
                 {
@@ -487,7 +569,7 @@ namespace TwitchDownloaderCore
             {
                 try
                 {
-                    await FetchEmoteImages(comments, emoteDataResponse.FFZ, emotes, ffzFolder, logger, cancellationToken);
+                    await FetchEmoteImages(usedWords, emoteDataResponse.FFZ, emotes, ffzFolder, logger, cancellationToken);
                 }
                 catch (Exception ex)
                 {
@@ -499,7 +581,7 @@ namespace TwitchDownloaderCore
             {
                 try
                 {
-                    await FetchEmoteImages(comments, emoteDataResponse.STV, emotes, stvFolder, logger, cancellationToken);
+                    await FetchEmoteImages(usedWords, emoteDataResponse.STV, emotes, stvFolder, logger, cancellationToken);
                 }
                 catch (Exception ex)
                 {
@@ -509,51 +591,66 @@ namespace TwitchDownloaderCore
 
             return emotes.Values.ToList();
 
-            static async Task FetchEmoteImages([AllowNull] IEnumerable<Comment> comments, IEnumerable<EmoteResponseItem> emoteResponse, Dictionary<string, TwitchEmote> emotes,
+            static async Task FetchEmoteImages([AllowNull] HashSet<string> usedWords, IEnumerable<EmoteResponseItem> emoteResponse, Dictionary<string, TwitchEmote> emotes,
                 DirectoryInfo cacheFolder, ITaskLogger logger, CancellationToken cancellationToken)
             {
+                if (emoteResponse is null)
+                    return;
+
                 if (!cacheFolder.Exists)
                     cacheFolder = CreateDirectory(cacheFolder.FullName);
 
-                IEnumerable<EmoteResponseItem> emoteResponseQuery;
-                if (comments is null)
+                List<EmoteResponseItem> emotesToFetch;
+                if (usedWords is null)
                 {
-                    emoteResponseQuery = emoteResponse;
+                    emotesToFetch = emoteResponse.ToList();
                 }
                 else
                 {
-                    emoteResponseQuery = from emote in emoteResponse
+                    emotesToFetch = (from emote in emoteResponse
                         where !emotes.ContainsKey(emote.Code)
-                        let regex = new Regex($@"(?<=^|\s){Regex.Escape(emote.Code)}(?=$|\s)")
-                        where comments.Any(comment => regex.IsMatch(comment.message.body))
-                        select emote;
+                        where usedWords.Contains(emote.Code)
+                        select emote).ToList();
                 }
 
-                foreach (var emote in emoteResponseQuery)
-                {
-                    var emoteUrl = emote.ImageUrl.Replace("[scale]", "2");
+                if (emotesToFetch.Count == 0)
+                    return;
 
+                // Download emote images with bounded concurrency
+                const int maxConcurrency = 10;
+                using var semaphore = new SemaphoreSlim(maxConcurrency);
+                var tasks = emotesToFetch.Select(async emote =>
+                {
+                    await semaphore.WaitAsync(cancellationToken);
                     try
                     {
+                        var emoteUrl = emote.ImageUrl.Replace("[scale]", "2");
                         var (bytes, codec) = await GetImage(cacheFolder, emoteUrl, emote.Id, 2, emote.ImageType, false, logger, cancellationToken);
                         if (bytes is null)
-                        {
-                            continue;
-                        }
+                            return;
 
                         var newEmote = new TwitchEmote(bytes, codec, EmoteProvider.ThirdParty, 2, emote.Id, emote.Code, emote.IsZeroWidth);
 
-                        if (!emotes.TryAdd(emote.Code, newEmote))
+                        lock (emotes)
                         {
-                            // Should never occur, but just in case
-                            newEmote.Dispose();
+                            if (!emotes.TryAdd(emote.Code, newEmote))
+                            {
+                                newEmote.Dispose();
+                            }
                         }
                     }
                     catch (HttpRequestException ex) when (ex.StatusCode == HttpStatusCode.NotFound)
                     {
+                        var emoteUrl = emote.ImageUrl.Replace("[scale]", "2");
                         logger.LogWarning($"Got {(int)ex.StatusCode}: {ex.StatusCode} when fetching {emote.Code} ({emoteUrl}).");
                     }
-                }
+                    finally
+                    {
+                        semaphore.Release();
+                    }
+                });
+
+                await Task.WhenAll(tasks);
             }
 
             static void LogProviderException(Exception ex, string providerName, ITaskLogger logger)
@@ -616,36 +713,40 @@ namespace TwitchDownloaderCore
                 }
             }
 
-            var failedEmotes = new HashSet<string>();
-            foreach (var id in toFetch)
+            if (toFetch.Count > 0 && !offline)
             {
-                cancellationToken.ThrowIfCancellationRequested();
-
-                if (failedEmotes.Contains(id))
+                const int maxConcurrency = 10;
+                using var semaphore = new SemaphoreSlim(maxConcurrency);
+                var tasks = toFetch.Select(async id =>
                 {
-                    continue;
-                }
-
-                try
-                {
-                    var (bytes, codec) = await GetImage(emoteFolder, $"https://static-cdn.jtvnw.net/emoticons/v2/{id}/default/dark/2.0", id, 2, "png", offline, logger, cancellationToken);
-                    if (bytes is null)
+                    await semaphore.WaitAsync(cancellationToken);
+                    try
                     {
-                        continue;
+                        var (bytes, codec) = await GetImage(emoteFolder, $"https://static-cdn.jtvnw.net/emoticons/v2/{id}/default/dark/2.0", id, 2, "png", offline, logger, cancellationToken);
+                        if (bytes is null)
+                            return;
+
+                        var newEmote = new TwitchEmote(bytes, codec, EmoteProvider.FirstParty, 2, id, id);
+
+                        lock (emotes)
+                        {
+                            if (!emotes.TryAdd(id, newEmote))
+                            {
+                                newEmote.Dispose();
+                            }
+                        }
                     }
-
-                    var newEmote = new TwitchEmote(bytes, codec, EmoteProvider.FirstParty, 2, id, id);
-
-                    if (!emotes.TryAdd(id, newEmote))
+                    catch (HttpRequestException ex) when (ex.StatusCode == HttpStatusCode.NotFound)
                     {
-                        // This should never occur, but just in case
-                        newEmote.Dispose();
+                        // Emote not found, skip silently
                     }
-                }
-                catch (HttpRequestException ex) when (ex.StatusCode == HttpStatusCode.NotFound)
-                {
-                    failedEmotes.Add(id);
-                }
+                    finally
+                    {
+                        semaphore.Release();
+                    }
+                });
+
+                await Task.WhenAll(tasks);
             }
 
             return emotes.Values.ToList();

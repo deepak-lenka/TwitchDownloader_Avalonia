@@ -72,9 +72,9 @@ public sealed class UiTaskProgress : ITaskProgress
         }
     }
 
-    public void LogVerbose(string logMessage) => _onLog?.Invoke(logMessage);
+    public void LogVerbose(string logMessage) { }
 
-    public void LogVerbose(DefaultInterpolatedStringHandler logMessage) => _onLog?.Invoke(logMessage.ToStringAndClear());
+    public void LogVerbose(DefaultInterpolatedStringHandler logMessage) { _ = logMessage.ToStringAndClear(); }
 
     public void LogInfo(string logMessage) => _onLog?.Invoke(logMessage);
 
@@ -90,8 +90,29 @@ public sealed class UiTaskProgress : ITaskProgress
 
     public void LogFfmpeg(string logMessage)
     {
-        // Filter out verbose libx264 encoding stats
-        if (logMessage.Contains("libx264 @")) return;
+        if (string.IsNullOrWhiteSpace(logMessage)) return;
+
+        var trimmed = logMessage.TrimStart();
+
+        // Filter out verbose FFMPEG logs that clutter the UI
+        if (trimmed.Contains("libx264 @")) return;
+        if (trimmed.StartsWith("ffmpeg version")) return;
+        if (trimmed.StartsWith("built with")) return;
+        if (trimmed.StartsWith("configuration:")) return;
+        if (trimmed.StartsWith("lib")) return;
+        if (trimmed.StartsWith("Stream mapping:")) return;
+        if (trimmed.StartsWith("Stream #")) return;
+        if (trimmed.StartsWith("Metadata:")) return;
+        if (trimmed.StartsWith("encoder")) return;
+        if (trimmed.StartsWith("Side data:")) return;
+        if (trimmed.StartsWith("cpb:")) return;
+        if (trimmed.StartsWith("Duration:")) return;
+        if (trimmed.StartsWith("Input #")) return;
+        if (trimmed.StartsWith("Output #")) return;
+        if (trimmed.StartsWith("frame=")) return;
+        if (trimmed.StartsWith("[out#")) return;
+        if (trimmed.StartsWith("video:") && trimmed.Contains("audio:")) return; // muxing summary line
+
         _onLog?.Invoke("[FFMPEG] " + logMessage);
     }
 }
